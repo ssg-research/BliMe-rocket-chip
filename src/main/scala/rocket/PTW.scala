@@ -178,7 +178,7 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
   }
 
   val (pte, invalid_paddr) = {
-    val tmp = new PTE().fromBits(mem_resp_data)
+    val tmp = new PTE().fromBits(Cat(mem_resp_data.blindmask, mem_resp_data.bits)) // TODO: need to check if PTE is blinded and fault if it is
     val res = Wire(init = tmp)
     res.ppn := Mux(do_both_stages && !stage2, tmp.ppn(vpnBits-1, 0), tmp.ppn(ppnBits-1, 0))
     when (tmp.r || tmp.w || tmp.x) {
@@ -561,9 +561,9 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
     val leaf = mem_resp_valid && !traverse && count === i
     ccover(leaf && pte.v && !invalid_paddr, s"L$i", s"successful page-table access, level $i")
     ccover(leaf && pte.v && invalid_paddr, s"L${i}_BAD_PPN_MSB", s"PPN too large, level $i")
-    ccover(leaf && !mem_resp_data(0), s"L${i}_INVALID_PTE", s"page not present, level $i")
+    ccover(leaf && !mem_resp_data.bits(0), s"L${i}_INVALID_PTE", s"page not present, level $i")
     if (i != pgLevels-1)
-      ccover(leaf && !pte.v && mem_resp_data(0), s"L${i}_BAD_PPN_LSB", s"PPN LSBs not zero, level $i")
+      ccover(leaf && !pte.v && mem_resp_data.bits(0), s"L${i}_BAD_PPN_LSB", s"PPN LSBs not zero, level $i")
   }
   ccover(mem_resp_valid && count === pgLevels-1 && pte.table(), s"TOO_DEEP", s"page table too deep")
   ccover(io.mem.s2_nack, "NACK", "D$ nacked page-table access")

@@ -365,8 +365,8 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   coverExceptions(id_xcpt, id_cause, "DECODE", idCoverCauses)
 
   val dcache_bypass_data =
-    if (fastLoadByte) io.dmem.resp.bits.data(xLen-1, 0)
-    else if (fastLoadWord) io.dmem.resp.bits.data_word_bypass(xLen-1, 0)
+    if (fastLoadByte) io.dmem.resp.bits.data.bits(xLen-1, 0)
+    else if (fastLoadWord) io.dmem.resp.bits.data_word_bypass.bits(xLen-1, 0)
     else wb_reg_wdata
 
   // detect bypass opportunities
@@ -698,7 +698,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val wb_wen = wb_valid && wb_ctrl.wxd
   val rf_wen = wb_wen || ll_wen
   val rf_waddr = Mux(ll_wen, ll_waddr, wb_waddr)
-  val rf_wdata = Mux(dmem_resp_valid && dmem_resp_xpu, io.dmem.resp.bits.data(xLen-1, 0),
+  val rf_wdata = Mux(dmem_resp_valid && dmem_resp_xpu, io.dmem.resp.bits.data.bits(xLen-1, 0),
                  Mux(ll_wen, ll_wdata,
                  Mux(wb_ctrl.csr =/= CSR.N, csr.io.rw.rdata,
                  Mux(wb_ctrl.mul, mul.map(_.io.resp.bits.data).getOrElse(wb_reg_wdata),

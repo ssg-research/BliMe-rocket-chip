@@ -113,7 +113,7 @@ trait HasCoreMemOp extends HasL1HellaCacheParameters {
 }
 
 trait HasCoreData extends HasCoreParameters {
-  val data = Bits(width = coreDataBits)
+  val data = BlindedMem(Bits(width = coreDataBits), Bits(width = coreDataBytes))
   val mask = UInt(width = coreDataBytes)
 }
 
@@ -130,9 +130,9 @@ class HellaCacheResp(implicit p: Parameters) extends CoreBundle()(p)
     with HasCoreData {
   val replay = Bool()
   val has_data = Bool()
-  val data_word_bypass = Bits(width = coreDataBits)
-  val data_raw = Bits(width = coreDataBits)
-  val store_data = Bits(width = coreDataBits)
+  val data_word_bypass = BlindedMem(Bits(width = coreDataBits), Bits(width = coreDataBytes))
+  val data_raw = BlindedMem(Bits(width = coreDataBits), Bits(width = coreDataBytes))
+  val store_data = BlindedMem(Bits(width = coreDataBits), Bits(width = coreDataBytes))
 }
 
 class AlignmentExceptions extends Bundle {

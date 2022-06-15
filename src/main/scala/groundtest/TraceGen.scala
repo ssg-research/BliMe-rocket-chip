@@ -569,7 +569,7 @@ class TraceGenerator(val params: TraceGenParams)(implicit val p: Parameters) ext
     tagMan.io.put   := Bool(true)
     // Print response
     printf("%d: resp %d #%d @%d\n", tid,
-      io.mem.resp.bits.data, io.mem.resp.bits.tag, cycleCount)
+      io.mem.resp.bits.data.bits, io.mem.resp.bits.tag, cycleCount)
     // Increment response count
     respCount := respCount + UInt(1)
   }

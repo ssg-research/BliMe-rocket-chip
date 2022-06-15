@@ -466,7 +466,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   def s2_store_valid = s2_store_valid_pre_kill && !io.cpu.s2_kill
   val pstore1_cmd = RegEnable(s1_req.cmd, s1_valid_not_nacked && s1_write)
   val pstore1_addr = RegEnable(s1_vaddr, s1_valid_not_nacked && s1_write)
-  val pstore1_data = RegEnable(io.cpu.s1_data.data, s1_valid_not_nacked && s1_write)
+  val pstore1_data = RegEnable(io.cpu.s1_data.data.bits, s1_valid_not_nacked && s1_write) // TODO incorrect; ignoring NBDcache
   val pstore1_way = RegEnable(s1_hit_way, s1_valid_not_nacked && s1_write)
   val pstore1_mask = RegEnable(s1_mask, s1_valid_not_nacked && s1_write)
   val pstore1_storegen_data = Wire(init = pstore1_data)
