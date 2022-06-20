@@ -181,7 +181,7 @@ final class TLBundleA(params: TLBundleParameters)
   val echo    = BundleMap(params.echoFields)
   // variable fields during multibeat:
   val mask    = UInt(width = params.dataBits/8)
-  val data    = UInt(width = params.dataBits)
+  val data    = UInt(width = (params.dataBits + params.dataBits/8))
   val corrupt = Bool() // only applies to *Data messages
 }
 final class TLBundleB(params: TLBundleParameters)
@@ -196,7 +196,7 @@ final class TLBundleB(params: TLBundleParameters)
   val address = UInt(width = params.addressBits) // from
   // variable fields during multibeat:
   val mask    = UInt(width = params.dataBits/8)
-  val data    = UInt(width = params.dataBits)
+  val data    = UInt(width = (params.dataBits + params.dataBits/8))
   val corrupt = Bool() // only applies to *Data messages
 }
 
@@ -231,7 +231,7 @@ final class TLBundleD(params: TLBundleParameters)
   val user    = BundleMap(params.responseFields)
   val echo    = BundleMap(params.echoFields)
   // variable fields during multibeat:
-  val data    = UInt(width = params.dataBits)
+  val data    = UInt(width = (params.dataBits + params.dataBits/8))
   val corrupt = Bool() // only applies to *Data messages
 }
 

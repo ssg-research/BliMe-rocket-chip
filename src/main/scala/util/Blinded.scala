@@ -2,12 +2,12 @@ package freechips.rocketchip.util
 
 import Chisel._
 
-class Blinded[+T <: Data](gen: T) extends Bundle {
+class Blinded[+T <: Data](gen: T, blind: Bool) extends Bundle {
 
   /** A bit that will be asserted when `bits` is blinded
     * @group Signals
     */
-  val blinded = Output(Bool())
+  val blinded = Output(blind)
 
   /** The data to be transferred
     * @group Signals
@@ -22,7 +22,9 @@ object Blinded {
     * @param gen the data to wrap
     * @return the wrapped input data
     */
-  def apply[T <: Data](gen: T): Blinded[T] = new Blinded(gen)
+  def apply[T <: Data](gen: T): Blinded[T] = new Blinded(gen, false.B)
+
+  def apply[T <: Data](gen: T, blind: Bool): Blinded[T] = new Blinded(gen, blind)
 }
 
 class BlindedMem[+T <: Data, +M <: Bits](gen: T, mask: M) extends Bundle {
