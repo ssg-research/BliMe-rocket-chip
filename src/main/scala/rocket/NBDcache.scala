@@ -864,7 +864,8 @@ class NonBlockingDCacheModule(outer: NonBlockingDCache) extends HellaCacheModule
 
   writeArb.io.in(0).bits.addr := s3_req.addr
   writeArb.io.in(0).bits.wmask := UIntToOH(s3_req.addr.extract(rowOffBits-1,offsetlsb))
-  writeArb.io.in(0).bits.data := BlindedMem(Fill(rowWords, s3_req.data.bits), Fill(rowWords, s3_req.data.blindmask))
+  writeArb.io.in(0).bits.data.bits := Fill(rowWords, s3_req.data.bits)
+  writeArb.io.in(0).bits.data.blindmask := Fill(rowWords, s3_req.data.blindmask)
   writeArb.io.in(0).valid := s3_valid
   writeArb.io.in(0).bits.way_en :=  s3_way
 
