@@ -265,9 +265,9 @@ class ICacheModule(outer: ICache) extends LazyModuleImp(outer)
   }
   assert(!(s1_valid || s1_slaveValid) || PopCount(s1_tag_hit zip s1_tag_disparity map { case (h, d) => h && !d }) <= 1)
 
-  require(tl_out.d.bits.data.getWidth % wordBits == 0)
+  require(tl_out.d.bits.data(tlBundleParams.dataBits-1,0).getWidth % wordBits == 0)
 
-  val data_arrays = Seq.tabulate(tl_out.d.bits.data.getWidth / wordBits) {
+  val data_arrays = Seq.tabulate(tl_out.d.bits.data(tlBundleParams.dataBits-1,0).getWidth / wordBits) {
     i =>
       DescribedSRAM(
         name = s"data_arrays_${i}",
@@ -278,7 +278,7 @@ class ICacheModule(outer: ICache) extends LazyModuleImp(outer)
   }
 
   for (((data_array, omSRAM), i) <- data_arrays zipWithIndex) {
-    def wordMatch(addr: UInt) = addr.extract(log2Ceil(tl_out.d.bits.data.getWidth/8)-1, log2Ceil(wordBits/8)) === i
+    def wordMatch(addr: UInt) = addr.extract(log2Ceil(tl_out.d.bits.data(tlBundleParams.dataBits-1,0).getWidth/8)-1, log2Ceil(wordBits/8)) === i
     def row(addr: UInt) = addr(untagBits-1, blockOffBits-log2Ceil(refillCycles))
     val s0_ren = (s0_valid && wordMatch(s0_vaddr)) || (s0_slaveValid && wordMatch(s0_slaveAddr))
     val wen = (refill_one_beat && !invalidated) || (s3_slaveValid && wordMatch(s1s3_slaveAddr))

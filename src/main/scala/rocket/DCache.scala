@@ -258,7 +258,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   tlb.io.sfence.valid := s1_valid && !io.cpu.s1_kill && s1_sfence
   tlb.io.sfence.bits.rs1 := s1_req.size(0)
   tlb.io.sfence.bits.rs2 := s1_req.size(1)
-  tlb.io.sfence.bits.asid := io.cpu.s1_data.data
+  tlb.io.sfence.bits.asid := io.cpu.s1_data.data.bits // FIXME blinded flag ignored
   tlb.io.sfence.bits.addr := s1_req.addr
   tlb.io.sfence.bits.hv := s1_req.cmd === M_HFENCEV
   tlb.io.sfence.bits.hg := s1_req.cmd === M_HFENCEG
@@ -296,7 +296,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
       (s1_meta_hit_way, s1_meta_hit_state, s1_meta)
     }
   val s1_data_way = Wire(init = if (nWays == 1) 1.U else Mux(inWriteback, releaseWay, s1_hit_way))
-  val tl_d_data_encoded = Wire(encodeData(tl_out.d.bits.data, false.B).cloneType)
+  val tl_d_data_encoded = Wire(encodeData(tl_out.d.bits.data(beatBytes*8-1, 0), false.B).cloneType)
   val s1_all_data_ways = Vec(data.io.resp ++ (!cacheParams.separateUncachedResp).option(tl_d_data_encoded))
   val s1_mask_xwr = new StoreGen(s1_req.size, s1_req.addr, UInt(0), wordBytes).mask
   val s1_mask = Mux(s1_req.cmd === M_PWR, io.cpu.s1_data.mask, s1_mask_xwr)
@@ -635,7 +635,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
       (whole_opc, whole_opc.isOneOf(uncachedGrantOpcodes), whole_opc.isOneOf(uncachedGrantOpcodesWithData))
     }
   }
-  tl_d_data_encoded := encodeData(tl_out.d.bits.data, tl_out.d.bits.corrupt && !io.ptw.customCSRs.suppressCorruptOnGrantData && !grantIsUncached)
+  tl_d_data_encoded := encodeData(tl_out.d.bits.data(beatBytes*8-1, 0), tl_out.d.bits.corrupt && !io.ptw.customCSRs.suppressCorruptOnGrantData && !grantIsUncached)
   val grantIsCached = d_opc.isOneOf(Grant, GrantData)
   val grantIsVoluntary = d_opc === ReleaseAck // Clears a different pending bit
   val grantIsRefill = d_opc === GrantData     // Writes the data array
@@ -915,7 +915,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   // uncached response
   val s1_uncached_data_word = {
     val word_idx = uncachedResp.addr.extract(log2Up(rowBits/8)-1, log2Up(wordBytes))
-    val words = tl_out.d.bits.data.grouped(wordBits)
+    val words = tl_out.d.bits.data(beatBytes*8-1, 0).grouped(wordBits)
     words(word_idx)
   }
   val s2_uncached_data_word = RegEnable(s1_uncached_data_word, io.cpu.replay_next)
@@ -945,10 +945,10 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   val s2_data_word_corrected = (0 until rowBits by wordBits).map(i => s2_data_corrected(wordBits+i-1,i)).reduce(_|_)
   val s2_data_word_possibly_uncached = Mux(cacheParams.pipelineWayMux && doUncachedResp, s2_uncached_data_word, 0.U) | s2_data_word
   val loadgen = new LoadGen(s2_req.size, s2_req.signed, s2_req.addr, s2_data_word_possibly_uncached, s2_sc, wordBytes)
-  io.cpu.resp.bits.data := loadgen.data | s2_sc_fail
-  io.cpu.resp.bits.data_word_bypass := loadgen.wordData
-  io.cpu.resp.bits.data_raw := s2_data_word
-  io.cpu.resp.bits.store_data := pstore1_data
+  io.cpu.resp.bits.data.bits := loadgen.data | s2_sc_fail // FIXME blinded flag ignored
+  io.cpu.resp.bits.data_word_bypass.bits := loadgen.wordData // FIXME blinded flag ignored
+  io.cpu.resp.bits.data_raw.bits := s2_data_word // FIXME blinded flag ignored
+  io.cpu.resp.bits.store_data.bits := pstore1_data // FIXME blinded flag ignored
 
   // AMOs
   if (usingRMW) {

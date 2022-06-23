@@ -873,7 +873,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   io.fpu.inst := id_inst(0)
   io.fpu.fromint_data := ex_rs(0)
   io.fpu.dmem_resp_val := dmem_resp_valid && dmem_resp_fpu
-  io.fpu.dmem_resp_data := io.dmem.resp.bits.data_word_bypass
+  io.fpu.dmem_resp_data := io.dmem.resp.bits.data_word_bypass.bits // FIXME blinded flag ignored
   io.fpu.dmem_resp_type := io.dmem.resp.bits.size
   io.fpu.dmem_resp_tag := dmem_resp_waddr
   io.fpu.keep_clock_enabled := io.ptw.customCSRs.disableCoreClockGate
@@ -890,7 +890,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   io.dmem.req.bits.idx.foreach(_ := io.dmem.req.bits.addr)
   io.dmem.req.bits.dprv := Mux(ex_reg_hls, csr.io.hstatus.spvp, csr.io.status.dprv)
   io.dmem.req.bits.dv := ex_reg_hls || csr.io.status.dv
-  io.dmem.s1_data.data := (if (fLen == 0) mem_reg_rs2 else Mux(mem_ctrl.fp, Fill((xLen max fLen) / fLen, io.fpu.store_data), mem_reg_rs2))
+  io.dmem.s1_data.data.bits := (if (fLen == 0) mem_reg_rs2 else Mux(mem_ctrl.fp, Fill((xLen max fLen) / fLen, io.fpu.store_data), mem_reg_rs2))
   io.dmem.s1_kill := killm_common || mem_ldst_xcpt || fpu_kill_mem
   io.dmem.s2_kill := false
   // don't let D$ go to sleep if we're probably going to use it soon

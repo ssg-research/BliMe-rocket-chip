@@ -11,8 +11,8 @@ class Atomics(params: TLBundleParameters) extends Module
   val io = new Bundle {
     val write    = Bool().flip // ignore opcode
     val a        = new TLBundleA(params).flip
-    val data_in  = UInt(width = params.dataBits).flip
-    val data_out = UInt(width = params.dataBits)
+    val data_in  = UInt(width = (params.dataBits + params.dataBits/8)).flip
+    val data_out = UInt(width = (params.dataBits + params.dataBits/8))
   }
 
   // Arithmetic, what to do

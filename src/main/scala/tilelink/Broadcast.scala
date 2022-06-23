@@ -517,5 +517,5 @@ object TLBroadcastConstants
 class TLBroadcastData(params: TLBundleParameters) extends TLBundleBase(params)
 {
   val mask = UInt((params.dataBits/8).W)
-  val data = UInt(params.dataBits.W)
+  val data = UInt((params.dataBits + params.dataBits/8).W)
 }
