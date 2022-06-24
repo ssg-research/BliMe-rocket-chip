@@ -123,41 +123,16 @@ class TLToAXI4(val combinational: Boolean = true, val adapterName: Option[String
         ElaborationArtefacts.add(s"$n.axi4.json", s"""{"mapping":[${map.mapping.mkString(",")}]}""")
       }
 
-      val memPortParams = p(ExtMem).get
-      val dramSize = memPortParams.master.size
-
-      def getDataAddr(a_address : UInt) = {
-        val sizeOfBlindednessTable = (dramSize/8).U
-        a_address + sizeOfBlindednessTable
-      }
-
-      def getBlindmaskAddr(a_address : UInt) = {
-        a_address >> 3 // divide by 8
-      }
-
-      def getBlindmaskMask(a_address : UInt) = {
-        
-      }
-
       // We need to keep the following state from A => D: (size, source)
       // All of those fields could potentially require 0 bits (argh. Chisel.)
       // We will pack all of that extra information into the echo bits.
 
       require (log2Ceil(edgeIn.maxLgSize+1) <= 4)
-      val a_queue = Queue(in.a, entries=1, pipe=true, flow=true)
-      // val addr_wire = Wire(Decoupled(UInt()))
-      // addr_wire.valid := true.B
-      // addr_wire.bits  := edgeIn.address(in.a.bits)
-      // a_addr_queue = Queue(addr_wire, entries=1, pipe=true, flow=true)
-      // val a_address = a_addr_queue.bits
-
-      val a_address = edgeIn.address(a_queue.bits)
-      val a_dataAddr = getDataAddr(a_address)
-      val a_blindmaskAddr = getBlindmaskAddr(a_address)
-      val a_source  = a_queue.bits.source
-      val a_size    = edgeIn.size(a_queue.bits) // TODO
-      val a_isPut   = edgeIn.hasData(a_queue.bits)
-      val (a_first, a_last, _) = edgeIn.firstlast(a_queue)
+      val a_address = edgeIn.address(in.a.bits)
+      val a_source  = in.a.bits.source
+      val a_size    = edgeIn.size(in.a.bits)
+      val a_isPut   = edgeIn.hasData(in.a.bits)
+      val (a_first, a_last, _) = edgeIn.firstlast(in.a)
 
       val r_state = out.r.bits.echo(AXI4TLState)
       val r_source  = r_state.source
@@ -183,38 +158,27 @@ class TLToAXI4(val combinational: Boolean = true, val adapterName: Option[String
 
       val beatBytes = edgeIn.manager.beatBytes
       val maxSize   = UInt(log2Ceil(beatBytes))
-      val beatBits  = beatBytes*8
-
-      // BlindedMem buffers and signals:
-      val zero_blindedmem = Wire(BlindedMem(UInt(beatBits.W), UInt(beatBytes.W)))
-      zero_blindedmem.bits := 0.U
-      zero_blindedmem.blindmask := 0.U
-      val blindedmem_reg = RegInit(zero_blindedmem)
-      val blindmask_get_inflight = RegInit(false.B)
-      val start_blindmask_get = Wire(Bool())
-      val blindmask_phase = Wire(Bool())
-      
       val doneAW    = RegInit(Bool(false))
-      when (a_queue.fire()) { doneAW := !a_last }
+      when (in.a.fire()) { doneAW := !a_last }
 
       val arw = out_arw.bits
       arw.wen   := a_isPut
       arw.id    := sourceTable(a_source)
-      arw.addr  := Mux(blindmask_phase, a_blindmaskAddr, a_dataAddr)
+      arw.addr  := a_address
       arw.len   := UIntToOH1(a_size, AXI4Parameters.lenBits + log2Ceil(beatBytes)) >> log2Ceil(beatBytes)
-      arw.size  := Mux(a_size >= maxSize, maxSize, a_size) // TODO
+      arw.size  := Mux(a_size >= maxSize, maxSize, a_size)
       arw.burst := AXI4Parameters.BURST_INCR
       arw.lock  := UInt(0) // not exclusive (LR/SC unsupported b/c no forward progress guarantee)
       arw.cache := UInt(0) // do not allow AXI to modify our transactions
       arw.prot  := AXI4Parameters.PROT_PRIVILEDGED
       arw.qos   := UInt(0) // no QoS
-      arw.user :<= a_queue.bits.user
-      arw.echo :<= a_queue.bits.echo
+      arw.user :<= in.a.bits.user
+      arw.echo :<= in.a.bits.echo
       val a_extra = arw.echo(AXI4TLState)
       a_extra.source := a_source
       a_extra.size   := a_size
 
-      a_queue.bits.user.lift(AMBAProt).foreach { x =>
+      in.a.bits.user.lift(AMBAProt).foreach { x =>
         val prot  = Wire(Vec(3, Bool()))
         val cache = Wire(Vec(4, Bool()))
         prot(0) :=  x.privileged
@@ -228,17 +192,15 @@ class TLToAXI4(val combinational: Boolean = true, val adapterName: Option[String
         arw.cache := Cat(cache.reverse)
       }
 
-      val stall = sourceStall(a_queue.bits.source) && a_first
-      val in_a_ready = WireDefault(!stall && Mux(a_isPut, (doneAW || out_arw.ready) && out_w.ready, out_arw.ready) && !blindmask_phase)
-      a_queue.ready := in_a_ready
-      // a_addr_queue.ready := in_a_ready
-      out_arw.valid := !stall && Mux(blindmask_phase, true.B, a_queue.valid) && Mux(a_isPut, !doneAW && out_w.ready, Bool(true))
+      val stall = sourceStall(in.a.bits.source) && a_first
+      in.a.ready := !stall && Mux(a_isPut, (doneAW || out_arw.ready) && out_w.ready, out_arw.ready)
+      out_arw.valid := !stall && in.a.valid && Mux(a_isPut, !doneAW && out_w.ready, Bool(true))
 
-      out_w.valid := !stall && a_queue.valid && a_isPut && (doneAW || out_arw.ready)
-      out_w.bits.data := Mux(blindmask_phase, , a_queue.bits.data(beatBits-1, 0))
-      out_w.bits.strb := a_queue.bits.mask // TODO
+      out_w.valid := !stall && in.a.valid && a_isPut && (doneAW || out_arw.ready)
+      out_w.bits.data := in.a.bits.data
+      out_w.bits.strb := in.a.bits.mask
       out_w.bits.last := a_last
-      out_w.bits.user.lift(AMBACorrupt).foreach { _ := a_queue.bits.corrupt } // TODO
+      out_w.bits.user.lift(AMBACorrupt).foreach { _ := in.a.bits.corrupt }
 
       // R and B => D arbitration
       val r_holds_d = RegInit(Bool(false))
@@ -254,14 +216,7 @@ class TLToAXI4(val combinational: Boolean = true, val adapterName: Option[String
 
       out.r.ready := in.d.ready && r_wins
       out.b.ready := in.d.ready && !r_wins
-      val curr_dresp_valid = Mux(r_wins, out.r.valid, out.b.valid)
-      start_blindmask_get := curr_dresp_valid && !blindmask_get_inflight
-      blindmask_phase := start_blindmask_get || blindmask_get_inflight
-      when (curr_dresp_valid) {
-        blindmask_get_inflight := !blindmask_get_inflight
-      }
-      
-      in.d.valid := curr_dresp_valid && blindmask_get_inflight // pass combined blindedmem word as soon as blindmask arrives
+      in.d.valid := Mux(r_wins, out.r.valid, out.b.valid)
 
       // If the first beat of the AXI RRESP is RESP_DECERR, treat this as a denied
       // request. We must pulse extend this value as AXI is allowed to change the
