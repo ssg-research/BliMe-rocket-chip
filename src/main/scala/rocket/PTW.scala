@@ -178,7 +178,19 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
   }
 
   val (pte, invalid_paddr) = {
-    val tmp = new PTE().fromBits(Cat(mem_resp_data.blindmask, mem_resp_data.bits)) // TODO: need to check if PTE is blinded and fault if it is
+    val tmp = new PTE().fromBits(mem_resp_data.bits)
+    when (mem_resp_data.blindmask.orR) { // if blinded, replace with blank PTE
+      tmp.ppn := 0.U
+      tmp.reserved_for_software := 0.U
+      tmp.d := false.B
+      tmp.a := false.B
+      tmp.g := false.B
+      tmp.u := false.B
+      tmp.x := false.B
+      tmp.w := false.B
+      tmp.r := false.B
+      tmp.v := false.B
+    }
     val res = Wire(init = tmp)
     res.ppn := Mux(do_both_stages && !stage2, tmp.ppn(vpnBits-1, 0), tmp.ppn(ppnBits-1, 0))
     when (tmp.r || tmp.w || tmp.x) {

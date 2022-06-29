@@ -25,6 +25,7 @@ class L1DataReadReq(implicit p: Parameters) extends L1HellaCacheBundle()(p) {
 class L1DataWriteReq(implicit p: Parameters) extends L1DataReadReq()(p) {
   val wmask  = Bits(width = rowWords)
   val data   = BlindedMem(Bits(width = encRowBits), Bits(width = (coreDataBytes*rowWords)))
+  val blindedOnly = Bool()
 }
 
 class L1RefillReq(implicit p: Parameters) extends L1DataReadReq()(p)
