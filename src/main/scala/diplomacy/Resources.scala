@@ -22,7 +22,7 @@ case class ResourcePermissions(r: Boolean, w: Boolean, x: Boolean, c: Boolean, a
   * @param address      the address space.
   * @param permissions  the permission attributes of this space. See [[freechips.rocketchip.diplomacy.ResourcePermissions]].
   */
-final case class ResourceAddress(address: Seq[AddressSet], permissions: ResourcePermissions) extends ResourceValue
+final case class ResourceAddress(address: Seq[AddressSet], permissions: ResourcePermissions, var isMainMem: Boolean = false) extends ResourceValue
 {
   /* For things like SPI which uses simple integer addressing */
   def this(x: Int) = this(Seq(AddressSet(x, 0)), ResourcePermissions(false, false, false, false, false))
@@ -251,9 +251,11 @@ class MemoryDevice extends Device with DeviceRegName
   def describe(resources: ResourceBindings): Description = {
     println("printMyMemDescPlease1 " + resources.map.filterKeys(DiplomacyUtils.regFilter).flatMap(_._2).map(_.value).toList)
     val memDesc = resources.map.filterKeys(DiplomacyUtils.regFilter).flatMap(_._2).map(_.value).toList.map{ resVal => 
-      resVal.asInstanceOf[ResourceAddress].copy(address = resVal.asInstanceOf[ResourceAddress].address.map{ addrSet => addrSet.copy(mask = addrSet.mask / 2)})
+      // resVal.asInstanceOf[ResourceAddress].copy(address = resVal.asInstanceOf[ResourceAddress].address.map{ addrSet => addrSet.copy(mask = addrSet.mask / 2)})
+      resVal.asInstanceOf[ResourceAddress].isMainMem = true
+      resVal
     }
-    println("printMyMemDescPlease2 " + memDesc)
+    println("printMyMemDescPlease2 (" + memDesc.map{ x => x.asInstanceOf[ResourceAddress].isMainMem} + ") " + memDesc)
     Description(describeName("memory", resources), ListMap(
       "reg"         -> memDesc,
       "device_type" -> Seq(ResourceString("memory"))))

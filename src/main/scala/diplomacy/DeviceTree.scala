@@ -44,7 +44,7 @@ object DTS
   private def fmtAddress(x: ResourceAddress, cells: Cells): Seq[String] = {
     val ranges = AddressRange.fromSets(x.address)
     ranges.flatMap { case AddressRange(base, size) =>
-      fmtCell(base, cells.parentAddress)  ++ fmtCell(size, cells.parentSize)
+      fmtCell(base, cells.parentAddress)  ++ fmtCell( if (x.isMainMem) {size/2} else {size}, cells.parentSize)
     }
   }
 

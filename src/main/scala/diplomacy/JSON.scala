@@ -26,7 +26,7 @@ object JSON
   }
 
   private def helper(res: ResourceValue)(implicit path: Map[String, String]): Seq[String] = res match {
-    case ResourceAddress(address, ResourcePermissions(r, w, x, c, a)) =>
+    case ResourceAddress(address, ResourcePermissions(r, w, x, c, a), _) =>
       AddressRange.fromSets(address).map { case AddressRange(base, size) =>
         s"""{"base":${base},"size":${size},"r":${r},"w":${w},"x":${x},"c":${c},"a":${a}}"""}
     case ResourceMapping(address, offset, ResourcePermissions(r, w, x, c, a)) =>

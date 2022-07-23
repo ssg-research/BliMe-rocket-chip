@@ -70,7 +70,7 @@ class ICache(val icacheParams: ICacheParams, val staticIdForMetadataUseOnly: Int
   val device = new SimpleDevice("itim", Seq("sifive,itim0")) {
     override def describe(resources: ResourceBindings): Description = {
      val Description(name, mapping) = super.describe(resources)
-     val Seq(Binding(_, ResourceAddress(address, perms))) = resources("reg/mem")
+     val Seq(Binding(_, ResourceAddress(address, perms, _))) = resources("reg/mem")
      val base_address = address.head.base
      val mem_part = AddressSet.misaligned(base_address, itim_control_offset)
      val control_part = AddressSet.misaligned(base_address + itim_control_offset, size - itim_control_offset)
