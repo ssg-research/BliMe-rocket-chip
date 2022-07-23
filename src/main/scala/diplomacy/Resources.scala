@@ -249,8 +249,13 @@ class SimpleBus(devname: String, devcompat: Seq[String], offset: BigInt = 0) ext
 class MemoryDevice extends Device with DeviceRegName
 {
   def describe(resources: ResourceBindings): Description = {
+    println("printMyMemDescPlease1 " + resources.map.filterKeys(DiplomacyUtils.regFilter).flatMap(_._2).map(_.value).toList)
+    val memDesc = resources.map.filterKeys(DiplomacyUtils.regFilter).flatMap(_._2).map(_.value).toList.map{ resVal => 
+      resVal.asInstanceOf[ResourceAddress].copy(address = resVal.asInstanceOf[ResourceAddress].address.map{ addrSet => addrSet.copy(mask = addrSet.mask / 2)})
+    }
+    println("printMyMemDescPlease2 " + memDesc)
     Description(describeName("memory", resources), ListMap(
-      "reg"         -> resources.map.filterKeys(DiplomacyUtils.regFilter).flatMap(_._2).map(_.value).toList,
+      "reg"         -> memDesc,
       "device_type" -> Seq(ResourceString("memory"))))
   }
 }
