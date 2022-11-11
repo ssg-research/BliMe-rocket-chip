@@ -64,11 +64,11 @@ class TLBResp(implicit p: Parameters) extends CoreBundle()(p) {
 
 class TLBEntryData(implicit p: Parameters) extends CoreBundle()(p) {
   val ppn = UInt(width = ppnBits)
-  val v = Bool()
   val u = Bool()
   val g = Bool()
   val ae_ptw = Bool()
   val ae_final = Bool()
+  val pf = Bool()
   val gf = Bool()
   val sw = Bool()
   val sx = Bool()
@@ -92,29 +92,29 @@ class TLBEntry(val nSectors: Int, val superpage: Boolean, val superpageOnly: Boo
   require(!superpageOnly || superpage)
 
   val level = UInt(width = log2Ceil(pgLevels))
-  val tag = UInt(width = vpnBits)
+  val tag_vpn = UInt(width = vpnBits)
+  val tag_v = Bool()
   val data = Vec(nSectors, UInt(width = new TLBEntryData().getWidth))
   val valid = Vec(nSectors, Bool())
   def entry_data = data.map(_.asTypeOf(new TLBEntryData))
 
   private def sectorIdx(vpn: UInt) = vpn.extract(nSectors.log2-1, 0)
   def getData(vpn: UInt) = OptimizationBarrier(data(sectorIdx(vpn)).asTypeOf(new TLBEntryData))
-  def sectorHit(vpn: UInt) = valid.orR && sectorTagMatch(vpn)
-  def sectorTagMatch(vpn: UInt) = ((tag ^ vpn) >> nSectors.log2) === 0
+  def sectorHit(vpn: UInt, virtual: Bool) = valid.orR && sectorTagMatch(vpn, virtual)
+  def sectorTagMatch(vpn: UInt, virtual: Bool) = (((tag_vpn ^ vpn) >> nSectors.log2) === 0) && (tag_v === virtual)
   def hit(vpn: UInt, virtual: Bool): Bool = {
     if (superpage && usingVM) {
-      var tagMatch = valid.head && entry_data.head.v === virtual
+      var tagMatch = valid.head && (tag_v === virtual)
       for (j <- 0 until pgLevels) {
         val base = (pgLevels - 1 - j) * pgLevelBits
         val n = pgLevelBits + (if (j == 0) hypervisorExtraAddrBits else 0)
         val ignore = level < j || superpageOnly && j == pgLevels - 1
-        tagMatch = tagMatch && (ignore || (tag ^ vpn)(base + n - 1, base) === 0)
+        tagMatch = tagMatch && (ignore || (tag_vpn ^ vpn)(base + n - 1, base) === 0)
       }
       tagMatch
     } else {
       val idx = sectorIdx(vpn)
-      val virtualMatch = entry_data.map(_.v === virtual)
-      valid(idx) && virtualMatch(idx) && sectorTagMatch(vpn)
+      valid(idx) && sectorTagMatch(vpn, virtual)
     }
   }
   def ppn(vpn: UInt, data: TLBEntryData) = {
@@ -131,40 +131,41 @@ class TLBEntry(val nSectors: Int, val superpage: Boolean, val superpageOnly: Boo
     }
   }
 
-  def insert(tag: UInt, level: UInt, entry: TLBEntryData): Unit = {
-    this.tag := tag
+  def insert(vpn: UInt, virtual: Bool, level: UInt, entry: TLBEntryData): Unit = {
+    this.tag_vpn := vpn
+    this.tag_v := virtual
     this.level := level.extract(log2Ceil(pgLevels - superpageOnly.toInt)-1, 0)
 
-    val idx = sectorIdx(tag)
+    val idx = sectorIdx(vpn)
     valid(idx) := true
     data(idx) := entry.asUInt
   }
 
   def invalidate(): Unit = { valid.foreach(_ := false) }
-  def invalidate(virtual: Bool, guestPhys: Bool): Unit = {
+  def invalidate(virtual: Bool): Unit = {
     for ((v, e) <- valid zip entry_data)
-      when (e.v === virtual || e.v && guestPhys) { v := false }
+      when (tag_v === virtual) { v := false }
   }
   def invalidateVPN(vpn: UInt, virtual: Bool): Unit = {
     if (superpage) {
       when (hit(vpn, virtual)) { invalidate() }
     } else {
-      when (sectorTagMatch(vpn)) {
+      when (sectorTagMatch(vpn, virtual)) {
         for (((v, e), i) <- (valid zip entry_data).zipWithIndex)
-          when (e.v === virtual && i === sectorIdx(vpn)) { v := false }
+          when (tag_v === virtual && i === sectorIdx(vpn)) { v := false }
       }
 
       // For fragmented superpage mappings, we assume the worst (largest)
       // case, and zap entries whose most-significant VPNs match
-      when (((tag ^ vpn) >> (pgLevelBits * (pgLevels - 1))) === 0) {
+      when (((tag_vpn ^ vpn) >> (pgLevelBits * (pgLevels - 1))) === 0) {
         for ((v, e) <- valid zip entry_data)
-          when (e.v === virtual && e.fragmented_superpage) { v := false }
+          when (tag_v === virtual && e.fragmented_superpage) { v := false }
       }
     }
   }
   def invalidateNonGlobal(virtual: Bool): Unit = {
     for ((v, e) <- valid zip entry_data)
-      when (e.v === virtual && !e.g) { v := false }
+      when (tag_v === virtual && !e.g) { v := false }
   }
 }
 
@@ -206,7 +207,7 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
   val r_gpa_valid = Reg(Bool())
   val r_gpa = Reg(UInt(vaddrBits.W))
   val r_gpa_vpn = Reg(UInt(vpnBits.W))
-  val r_gpa_gf = Reg(Bool())
+  val r_gpa_is_pte = Reg(Bool())
 
   val priv = io.req.bits.prv
   val priv_v = usingHypervisor && io.req.bits.v
@@ -249,7 +250,7 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
   val prot_x = fastCheck(_.executable) && !deny_access_to_debug && pmp.io.x
   val prot_eff = fastCheck(Seq(RegionType.PUT_EFFECTS, RegionType.GET_EFFECTS) contains _.regionType)
 
-  val sector_hits = sectored_entries(memIdx).map(_.sectorHit(vpn))
+  val sector_hits = sectored_entries(memIdx).map(_.sectorHit(vpn, priv_v))
   val superpage_hits = superpage_entries.map(_.hit(vpn, priv_v))
   val hitsVec = all_entries.map(vm_enabled && _.hit(vpn, priv_v))
   val real_hits = hitsVec.asUInt
@@ -258,14 +259,15 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
   // permission bit arrays
   when (do_refill) {
     val pte = io.ptw.resp.bits.pte
+    val refill_v = r_vstage1_en || r_stage2_en
     val newEntry = Wire(new TLBEntryData)
     newEntry.ppn := pte.ppn
-    newEntry.v := r_vstage1_en || r_stage2_en
     newEntry.c := cacheable
     newEntry.u := pte.u
     newEntry.g := pte.g && pte.v
     newEntry.ae_ptw := io.ptw.resp.bits.ae_ptw
     newEntry.ae_final := io.ptw.resp.bits.ae_final
+    newEntry.pf := io.ptw.resp.bits.pf
     newEntry.gf := io.ptw.resp.bits.gf
     newEntry.hr := io.ptw.resp.bits.hr
     newEntry.hw := io.ptw.resp.bits.hw
@@ -283,11 +285,11 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
     newEntry.fragmented_superpage := io.ptw.resp.bits.fragmented_superpage
 
     when (special_entry.nonEmpty && !io.ptw.resp.bits.homogeneous) {
-      special_entry.foreach(_.insert(r_refill_tag, io.ptw.resp.bits.level, newEntry))
+      special_entry.foreach(_.insert(r_refill_tag, refill_v, io.ptw.resp.bits.level, newEntry))
     }.elsewhen (io.ptw.resp.bits.level < pgLevels-1) {
       val waddr = Mux(r_superpage_hit.valid && usingHypervisor, r_superpage_hit.bits, r_superpage_repl_addr)
       for ((e, i) <- superpage_entries.zipWithIndex) when (r_superpage_repl_addr === i) {
-        e.insert(r_refill_tag, io.ptw.resp.bits.level, newEntry)
+        e.insert(r_refill_tag, refill_v, io.ptw.resp.bits.level, newEntry)
         when (invalidate_refill) { e.invalidate() }
       }
     }.otherwise {
@@ -295,14 +297,14 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
       val waddr = Mux(r_sectored_hit.valid, r_sectored_hit.bits, r_sectored_repl_addr)
       for ((e, i) <- sectored_entries(r_memIdx).zipWithIndex) when (waddr === i) {
         when (!r_sectored_hit.valid) { e.invalidate() }
-        e.insert(r_refill_tag, 0.U, newEntry)
+        e.insert(r_refill_tag, refill_v, 0.U, newEntry)
         when (invalidate_refill) { e.invalidate() }
       }
     }
 
     r_gpa_valid := io.ptw.resp.bits.gpa.valid
     r_gpa := io.ptw.resp.bits.gpa.bits
-    r_gpa_gf := io.ptw.resp.bits.gf
+    r_gpa_is_pte := io.ptw.resp.bits.gpa_is_pte
   }
 
   val entries = all_entries.map(_.getData(vpn))
@@ -312,6 +314,7 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
   val nPhysicalEntries = 1 + special_entry.size
   val ptw_ae_array = Cat(false.B, entries.map(_.ae_ptw).asUInt)
   val final_ae_array = Cat(false.B, entries.map(_.ae_final).asUInt)
+  val ptw_pf_array = Cat(false.B, entries.map(_.pf).asUInt)
   val ptw_gf_array = Cat(false.B, entries.map(_.gf).asUInt)
   val sum = Mux(priv_v, io.ptw.gstatus.sum, io.ptw.status.sum)
   val priv_rw_ok = Mux(!priv_s || sum, entries.map(_.u).asUInt, 0.U) | Mux(priv_s, ~entries.map(_.u).asUInt, 0.U)
@@ -383,12 +386,12 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
     Mux(cmd_amo_logical, ~paa_array, 0.U) |
     Mux(cmd_amo_arithmetic, ~pal_array, 0.U) |
     Mux(cmd_lrsc, ~0.U(pal_array.getWidth.W), 0.U)
-  val pf_ld_array = Mux(cmd_read, ~(Mux(cmd_readx, x_array, r_array) | (ptw_ae_array | ptw_gf_array)), 0.U)
-  val pf_st_array = Mux(cmd_write_perms, ~(w_array | (ptw_ae_array | ptw_gf_array)), 0.U)
-  val pf_inst_array = ~(x_array | (ptw_ae_array | ptw_gf_array))
-  val gf_ld_array = Mux(priv_v && cmd_read, ~(Mux(cmd_readx, hx_array, hr_array) | ptw_ae_array), 0.U)
-  val gf_st_array = Mux(priv_v && cmd_write_perms, ~(hw_array | ptw_ae_array), 0.U)
-  val gf_inst_array = Mux(priv_v, ~(hx_array | ptw_ae_array), 0.U)
+  val pf_ld_array = Mux(cmd_read, ((~Mux(cmd_readx, x_array, r_array) & ~ptw_ae_array) | ptw_pf_array) & ~ptw_gf_array, 0.U)
+  val pf_st_array = Mux(cmd_write_perms, ((~w_array & ~ptw_ae_array) | ptw_pf_array) & ~ptw_gf_array, 0.U)
+  val pf_inst_array = ((~x_array & ~ptw_ae_array) | ptw_pf_array) & ~ptw_gf_array
+  val gf_ld_array = Mux(priv_v && cmd_read, ~Mux(cmd_readx, hx_array, hr_array) & ~ptw_ae_array, 0.U)
+  val gf_st_array = Mux(priv_v && cmd_write_perms, ~hw_array & ~ptw_ae_array, 0.U)
+  val gf_inst_array = Mux(priv_v, ~hx_array & ~ptw_ae_array, 0.U)
 
   val gpa_hits = {
     val need_gpa_mask = if (instruction) gf_inst_array else gf_ld_array | gf_st_array
@@ -433,7 +436,7 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
   io.resp.prefetchable := (prefetchable_array & hits).orR && edge.manager.managers.forall(m => !m.supportsAcquireB || m.supportsHint)
   io.resp.miss := do_refill || vsatp_mode_mismatch || tlb_miss || multipleHits
   io.resp.paddr := Cat(ppn, io.req.bits.vaddr(pgIdxBits-1, 0))
-  io.resp.gpa_is_pte := vstage1_en && r_gpa_gf
+  io.resp.gpa_is_pte := vstage1_en && r_gpa_is_pte
   io.resp.gpa := {
     val page = Mux(!vstage1_en, Cat(bad_va, vpn), r_gpa >> pgIdxBits)
     val offset = Mux(io.resp.gpa_is_pte, r_gpa(pgIdxBits-1, 0), io.req.bits.vaddr(pgIdxBits-1, 0))
@@ -486,11 +489,11 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
         val hg = usingHypervisor && io.sfence.bits.hg
         when (!hg && io.sfence.bits.rs1) { e.invalidateVPN(vpn, hv) }
         .elsewhen (!hg && io.sfence.bits.rs2) { e.invalidateNonGlobal(hv) }
-        .otherwise { e.invalidate(hv, hg) }
+        .otherwise { e.invalidate(hv || hg) }
       }
     }
     when(io.req.fire() && vsatp_mode_mismatch) {
-      all_real_entries.foreach(_.invalidate(true, false))
+      all_real_entries.foreach(_.invalidate(true))
       v_entries_use_stage1 := vstage1_en
     }
     when (multipleHits || reset) {

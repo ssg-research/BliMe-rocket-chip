@@ -13,7 +13,6 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.util._
 import freechips.rocketchip.util.property
-import freechips.rocketchip.diplomaticobjectmodel.logicaltree.ICacheLogicalTreeNode
 
 class FrontendReq(implicit p: Parameters) extends CoreBundle()(p) {
   val pc = UInt(width = vaddrBitsExtended)
@@ -59,6 +58,7 @@ class FrontendIO(implicit p: Parameters) extends CoreBundle()(p) {
   val flush_icache = Bool(OUTPUT)
   val npc = UInt(INPUT, width = vaddrBitsExtended)
   val perf = new FrontendPerfEvents().asInput
+  val progress = Bool(OUTPUT)
 }
 
 class Frontend(val icacheParams: ICacheParams, staticIdForMetadataUseOnly: Int)(implicit p: Parameters) extends LazyModule {
@@ -148,6 +148,14 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
     s2_tlb_resp := tlb.io.resp
   }
 
+  val recent_progress_counter_init = 3.U
+  val recent_progress_counter = RegInit(recent_progress_counter_init)
+  val recent_progress = recent_progress_counter > 0
+  when(io.ptw.req.fire && recent_progress) { recent_progress_counter := recent_progress_counter - 1 }
+  when(io.cpu.progress) { recent_progress_counter := recent_progress_counter_init }
+
+  val s2_kill_speculative_tlb_refill = s2_speculative && !recent_progress
+
   io.ptw <> tlb.io.ptw
   tlb.io.req.valid := s1_valid && !s2_replay
   tlb.io.req.bits.vaddr := s1_pc
@@ -156,7 +164,7 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   tlb.io.req.bits.prv := io.ptw.status.prv
   tlb.io.req.bits.v := io.ptw.status.v
   tlb.io.sfence := io.cpu.sfence
-  tlb.io.kill := !s2_valid
+  tlb.io.kill := !s2_valid || s2_kill_speculative_tlb_refill
 
   icache.io.req.valid := s0_valid
   icache.io.req.bits.addr := io.cpu.npc
@@ -166,15 +174,16 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   icache.io.s1_kill := s2_redirect || tlb.io.resp.miss || s2_replay
   val s2_can_speculatively_refill = s2_tlb_resp.cacheable && !io.ptw.customCSRs.asInstanceOf[RocketCustomCSRs].disableSpeculativeICacheRefill
   icache.io.s2_kill := s2_speculative && !s2_can_speculatively_refill || s2_xcpt
+  icache.io.s2_cacheable := s2_tlb_resp.cacheable
   icache.io.s2_prefetch := s2_tlb_resp.prefetchable && !io.ptw.customCSRs.asInstanceOf[RocketCustomCSRs].disableICachePrefetch
 
-  fq.io.enq.valid := RegNext(s1_valid) && s2_valid && (icache.io.resp.valid || !s2_tlb_resp.miss && icache.io.s2_kill)
+  fq.io.enq.valid := RegNext(s1_valid) && s2_valid && (icache.io.resp.valid || (s2_kill_speculative_tlb_refill && s2_tlb_resp.miss) || (!s2_tlb_resp.miss && icache.io.s2_kill))
   fq.io.enq.bits.pc := s2_pc
   io.cpu.npc := alignPC(Mux(io.cpu.req.valid, io.cpu.req.bits.pc, npc))
 
   fq.io.enq.bits.data := icache.io.resp.bits.data
   fq.io.enq.bits.mask := UInt((1 << fetchWidth)-1) << s2_pc.extract(log2Ceil(fetchWidth)+log2Ceil(coreInstBytes)-1, log2Ceil(coreInstBytes))
-  fq.io.enq.bits.replay := icache.io.resp.bits.replay || icache.io.s2_kill && !icache.io.resp.valid && !s2_xcpt
+  fq.io.enq.bits.replay := (icache.io.resp.bits.replay || icache.io.s2_kill && !icache.io.resp.valid && !s2_xcpt) || (s2_kill_speculative_tlb_refill && s2_tlb_resp.miss)
   fq.io.enq.bits.btb := s2_btb_resp_bits
   fq.io.enq.bits.btb.taken := s2_btb_taken
   fq.io.enq.bits.xcpt := s2_tlb_resp
@@ -223,7 +232,7 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
       val rviReturn = rviJALR && !rviBits(7) && BitPat("b00?01") === rviBits(19,15)
       val rviCall = (rviJALR || rviJump) && rviBits(7)
       val rvcBranch = bits === Instructions.C_BEQZ || bits === Instructions.C_BNEZ
-      val rvcJAL = Bool(xLen == 32) && bits === Instructions.C_JAL
+      val rvcJAL = Bool(xLen == 32) && bits === Instructions32.C_JAL
       val rvcJump = bits === Instructions.C_J || rvcJAL
       val rvcImm = Mux(bits(14), new RVCDecoder(bits, xLen).bImm.asSInt, new RVCDecoder(bits, xLen).jImm.asSInt)
       val rvcJR = bits === Instructions.C_MV && bits(6,2) === 0
@@ -379,8 +388,6 @@ trait HasICacheFrontend extends CanHavePTW { this: BaseTile =>
   // This should be a None in the case of not having an ITIM address, when we
   // don't actually use the device that is instantiated in the frontend.
   private val deviceOpt = if (tileParams.icache.get.itimAddr.isDefined) Some(frontend.icache.device) else None
-
-  val iCacheLogicalTreeNode = new ICacheLogicalTreeNode(frontend.icache, deviceOpt, tileParams.icache.get)
 }
 
 trait HasICacheFrontendModule extends CanHavePTWModule {

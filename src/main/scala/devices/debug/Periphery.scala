@@ -10,7 +10,6 @@ import freechips.rocketchip.config.{Field, Parameters}
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.amba.apb._
 import freechips.rocketchip.diplomacy._
-import freechips.rocketchip.diplomaticobjectmodel.logicaltree.LogicalModuleTree
 import freechips.rocketchip.jtag._
 import freechips.rocketchip.util._
 import freechips.rocketchip.prci.{ClockSinkParameters, ClockSinkNode}
@@ -81,23 +80,21 @@ trait HasPeripheryDebug { this: BaseSubsystem =>
     domain
   }
   val debugOpt = p(DebugModuleKey).map { params =>
-    val debug = LazyModule(new TLDebugModule(tlbus.beatBytes))
+    val tlDM = LazyModule(new TLDebugModule(tlbus.beatBytes))
 
-    LogicalModuleTree.add(logicalTreeNode, debug.logicalTreeNode)
+    tlDM.node := tlbus.coupleTo("debug"){ TLFragmenter(tlbus) := _ }
+    tlDM.dmInner.dmInner.customNode := debugCustomXbarOpt.get.node
 
-    debug.node := tlbus.coupleTo("debug"){ TLFragmenter(tlbus) := _ }
-    debug.dmInner.dmInner.customNode := debugCustomXbarOpt.get.node
-
-    (apbDebugNodeOpt zip debug.apbNodeOpt) foreach { case (master, slave) =>
+    (apbDebugNodeOpt zip tlDM.apbNodeOpt) foreach { case (master, slave) =>
       slave := master
     }
 
-    debug.dmInner.dmInner.sb2tlOpt.foreach { sb2tl  =>
+    tlDM.dmInner.dmInner.sb2tlOpt.foreach { sb2tl  =>
       locateTLBusWrapper(p(ExportDebug).masterWhere).coupleFrom("debug_sb") {
         _ := TLWidthWidget(1) := sb2tl.node
       }
     }
-    debug
+    tlDM
   }
 }
 

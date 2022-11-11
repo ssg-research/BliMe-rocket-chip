@@ -14,7 +14,6 @@ import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util._
 import freechips.rocketchip.util.property
-import freechips.rocketchip.diplomaticobjectmodel.model.OMSRAM
 import scala.collection.mutable.ListBuffer
 
 class PTWReq(implicit p: Parameters) extends CoreBundle()(p) {
@@ -27,6 +26,7 @@ class PTWReq(implicit p: Parameters) extends CoreBundle()(p) {
 class PTWResp(implicit p: Parameters) extends CoreBundle()(p) {
   val ae_ptw = Bool()
   val ae_final = Bool()
+  val pf = Bool()
   val gf = Bool()
   val hr = Bool()
   val hw = Bool()
@@ -36,6 +36,7 @@ class PTWResp(implicit p: Parameters) extends CoreBundle()(p) {
   val fragmented_superpage = Bool()
   val homogeneous = Bool()
   val gpa = Valid(UInt(vaddrBits.W))
+  val gpa_is_pte = Bool()
 }
 
 class TLBPTWIO(implicit p: Parameters) extends CoreBundle()(p)
@@ -75,7 +76,8 @@ class DatapathPTWIO(implicit p: Parameters) extends CoreBundle()(p)
 }
 
 class PTE(implicit p: Parameters) extends CoreBundle()(p) {
-  val ppn = UInt(width = 54)
+  val reserved_for_future = UInt(width = 10)
+  val ppn = UInt(width = 44)
   val reserved_for_software = Bits(width = 2)
   val d = Bool()
   val a = Bool()
@@ -86,7 +88,7 @@ class PTE(implicit p: Parameters) extends CoreBundle()(p) {
   val r = Bool()
   val v = Bool()
 
-  def table(dummy: Int = 0) = v && !r && !w && !x && !d && !a && !u
+  def table(dummy: Int = 0) = v && !r && !w && !x && !d && !a && !u && reserved_for_future === 0
   def leaf(dummy: Int = 0) = v && (r || (x && !w)) && a
   def ur(dummy: Int = 0) = sr() && u
   def uw(dummy: Int = 0) = sw() && u
@@ -120,8 +122,6 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
     val dpath = new DatapathPTWIO
   }
 
-  val omSRAMs = collection.mutable.ListBuffer[OMSRAM]()
-
   val s_ready :: s_req :: s_wait1 :: s_dummy1 :: s_wait2 :: s_wait3 :: s_dummy2 :: s_fragment_superpage :: Nil = Enum(UInt(), 8)
   val state = Reg(init=s_ready)
   val l2_refill_wire = Wire(Bool())
@@ -143,6 +143,7 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
   val count = Reg(UInt(width = log2Ceil(pgLevels)))
   val resp_ae_ptw = Reg(Bool())
   val resp_ae_final = Reg(Bool())
+  val resp_pf = Reg(Bool())
   val resp_gf = Reg(Bool())
   val resp_hr = Reg(Bool())
   val resp_hw = Reg(Bool())
@@ -192,7 +193,7 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
       tmp.v := false.B
     }
     val res = Wire(init = tmp)
-    res.ppn := Mux(do_both_stages && !stage2, tmp.ppn(vpnBits-1, 0), tmp.ppn(ppnBits-1, 0))
+    res.ppn := Mux(do_both_stages && !stage2, tmp.ppn(vpnBits.min(tmp.ppn.getWidth)-1, 0), tmp.ppn(ppnBits-1, 0))
     when (tmp.r || tmp.w || tmp.x) {
       // for superpage mappings, make sure PPN LSBs are zero
       for (i <- 0 until pgLevels-1)
@@ -208,25 +209,30 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
     }
     val mask     = Mux(stage2 && count === r_hgatp_initial_count, ((1 << (hypervisorExtraAddrBits + pgLevelBits)) - 1).U, ((1 << pgLevelBits) - 1).U)
     val vpn_idx  = vpn_idxs(count) & mask
+    val raw_pte_addr = ((r_pte.ppn << pgLevelBits) | vpn_idx) << log2Ceil(xLen / 8)
     val size = if (usingHypervisor) vaddrBits else paddrBits
-    (((r_pte.ppn << pgLevelBits) | vpn_idx) << log2Ceil(xLen / 8))(size - 1, 0)
+    raw_pte_addr.apply(size.min(raw_pte_addr.getWidth) - 1, 0)
   }
   val pte_cache_addr = if (!usingHypervisor) pte_addr else {
     val vpn_idxs = (0 until pgLevels-1).map(i => (aux_pte.ppn >> (pgLevels-i-1)*pgLevelBits)(pgLevelBits-1,0))
     val vpn_idx = vpn_idxs(count)
-    (Cat(r_pte.ppn, vpn_idx) << log2Ceil(xLen/8))(vaddrBits-1, 0)
+    val raw_pte_cache_addr = Cat(r_pte.ppn, vpn_idx) << log2Ceil(xLen/8)
+    raw_pte_cache_addr(vaddrBits.min(raw_pte_cache_addr.getWidth)-1, 0)
   }
   val stage2_pte_cache_addr = if (!usingHypervisor) 0.U else {
     val vpn_idxs = (0 until pgLevels - 1).map(i => (r_req.addr >> (pgLevels - i - 1) * pgLevelBits)(pgLevelBits - 1, 0))
     val vpn_idx  = vpn_idxs(aux_count)
-    (Cat(aux_pte.ppn, vpn_idx) << log2Ceil(xLen / 8))(vaddrBits - 1, 0)
+    val raw_s2_pte_cache_addr = Cat(aux_pte.ppn, vpn_idx) << log2Ceil(xLen / 8)
+    raw_s2_pte_cache_addr(vaddrBits.min(raw_s2_pte_cache_addr.getWidth) - 1, 0)
   }
 
   def makeFragmentedSuperpagePPN(ppn: UInt): Seq[UInt] = {
     (pgLevels-1 until 0 by -1).map(i => Cat(ppn >> (pgLevelBits*i), r_req.addr(((pgLevelBits*i) min vpnBits)-1, 0).padTo(pgLevelBits*i)))
   }
 
-  def makePTECache(s2: Boolean): (Bool, UInt) = {
+  def makePTECache(s2: Boolean): (Bool, UInt) = if (coreParams.nPTECacheEntries == 0) {
+    (false.B, 0.U)
+  } else {
     val plru = new PseudoLRU(coreParams.nPTECacheEntries)
     val valid = RegInit(0.U(coreParams.nPTECacheEntries.W))
     val tags = Reg(Vec(coreParams.nPTECacheEntries, UInt((if (usingHypervisor) 1 + vaddrBits else paddrBits).W)))
@@ -285,7 +291,7 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
 
     val l2_plru = new SetAssocLRU(nL2TLBSets, coreParams.nL2TLBWays, "plru")
 
-    val (ram, omSRAM) =  DescribedSRAM(
+    val ram =  DescribedSRAM(
       name = "l2_tlb_ram",
       desc = "L2 TLB",
       size = nL2TLBSets,
@@ -357,7 +363,6 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
       ccover(s2_hit && s2_hit_vec(way), s"L2_TLB_HIT_WAY$way", s"L2 TLB hit way$way")
     }
 
-    omSRAMs += omSRAM
     (s2_hit, s2_error, s2_pte, Some(ram))
   }
 
@@ -396,6 +401,7 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
     io.requestor(i).resp.valid := resp_valid(i)
     io.requestor(i).resp.bits.ae_ptw := resp_ae_ptw
     io.requestor(i).resp.bits.ae_final := resp_ae_final
+    io.requestor(i).resp.bits.pf := resp_pf
     io.requestor(i).resp.bits.gf := resp_gf
     io.requestor(i).resp.bits.hr := resp_hr
     io.requestor(i).resp.bits.hw := resp_hw
@@ -407,6 +413,7 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
     io.requestor(i).resp.bits.gpa.valid := r_req.need_gpa
     io.requestor(i).resp.bits.gpa.bits :=
       Cat(Mux(!stage2_final || !r_req.vstage1 || aux_count === (pgLevels - 1), aux_pte.ppn, makeFragmentedSuperpagePPN(aux_pte.ppn)(aux_count)), gpa_pgoff)
+    io.requestor(i).resp.bits.gpa_is_pte := !stage2_final
     io.requestor(i).ptbr := io.dpath.ptbr
     io.requestor(i).hgatp := io.dpath.hgatp
     io.requestor(i).vsatp := io.dpath.vsatp
@@ -437,8 +444,10 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
         count       := Mux(arb.io.out.bits.bits.stage2, hgatp_initial_count, satp_initial_count)
         aux_count   := Mux(arb.io.out.bits.bits.vstage1, vsatp_initial_count, 0.U)
         aux_pte.ppn := Mux(arb.io.out.bits.bits.vstage1, io.dpath.vsatp.ppn, arb.io.out.bits.bits.addr)
+        aux_pte.reserved_for_future := 0
         resp_ae_ptw := false
         resp_ae_final := false
+        resp_pf := false
         resp_gf := false
         resp_hr := true
         resp_hw := true
@@ -457,6 +466,7 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
       when (stage2_pte_cache_hit) {
         aux_count := aux_count + 1
         aux_pte.ppn := stage2_pte_cache_data
+        aux_pte.reserved_for_future := 0
         pte_hit := true
       }.elsewhen (pte_cache_hit) {
         count := count + 1
@@ -503,7 +513,7 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
     Mux(l2_hit && !l2_error, l2_pte,
     Mux(state === s_req && !stage2_pte_cache_hit && pte_cache_hit, makePTE(pte_cache_data, l2_pte),
     Mux(do_switch, makeHypervisorRootPTE(r_hgatp, pte.ppn, r_pte),
-    Mux(mem_resp_valid, Mux(!traverse && (r_req.vstage1 && stage2), merged_pte, pte),
+    Mux(mem_resp_valid, Mux(!traverse && r_req.vstage1 && stage2, merged_pte, pte),
     Mux(state === s_fragment_superpage && !homogeneous, makePTE(makeFragmentedSuperpagePPN(r_pte.ppn)(count), r_pte),
     Mux(arb.io.out.fire(), Mux(arb.io.out.bits.bits.stage2, makeHypervisorRootPTE(io.dpath.hgatp, io.dpath.vsatp.ppn, r_pte), makePTE(satp.ppn, r_pte)),
     r_pte)))))))
@@ -523,7 +533,8 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
     }.otherwise {
       val gf = stage2 && !stage2_final && !pte.ur()
       val ae = pte.v && invalid_paddr
-      val success = pte.v && !ae && !gf
+      val pf = pte.v && pte.reserved_for_future =/= 0
+      val success = pte.v && !ae && !pf && !gf
 
       when (do_both_stages && !stage2_final && success) {
         when (stage2) {
@@ -547,10 +558,11 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
         }
 
         resp_ae_final := ae
-        resp_gf := gf
-        resp_hr := !stage2 || !gf && pte.ur()
-        resp_hw := !stage2 || !gf && pte.uw()
-        resp_hx := !stage2 || !gf && pte.ux()
+        resp_pf := pf && !stage2
+        resp_gf := gf || (pf && stage2)
+        resp_hr := !stage2 || (!pf && !gf && pte.ur())
+        resp_hw := !stage2 || (!pf && !gf && pte.uw())
+        resp_hx := !stage2 || (!pf && !gf && pte.ux())
       }
     }
   }
@@ -571,8 +583,9 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
 
   for (i <- 0 until pgLevels) {
     val leaf = mem_resp_valid && !traverse && count === i
-    ccover(leaf && pte.v && !invalid_paddr, s"L$i", s"successful page-table access, level $i")
+    ccover(leaf && pte.v && !invalid_paddr && pte.reserved_for_future === 0, s"L$i", s"successful page-table access, level $i")
     ccover(leaf && pte.v && invalid_paddr, s"L${i}_BAD_PPN_MSB", s"PPN too large, level $i")
+    ccover(leaf && pte.v && pte.reserved_for_future =/= 0, s"L${i}_BAD_RSV_MSB", s"reserved MSBs set, level $i")
     ccover(leaf && !mem_resp_data.bits(0), s"L${i}_INVALID_PTE", s"page not present, level $i")
     if (i != pgLevels-1)
       ccover(leaf && !pte.v && mem_resp_data.bits(0), s"L${i}_BAD_PPN_LSB", s"PPN LSBs not zero, level $i")
@@ -605,7 +618,6 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
 /** Mix-ins for constructing tiles that might have a PTW */
 trait CanHavePTW extends HasTileParameters with HasHellaCache { this: BaseTile =>
   val module: CanHavePTWModule
-  val utlbOMSRAMs = collection.mutable.ListBuffer[OMSRAM]()
   var nPTWPorts = 1
   nDCachePorts += usingPTW.toInt
 }
@@ -616,6 +628,5 @@ trait CanHavePTWModule extends HasHellaCacheModule {
   val ptw = Module(new PTW(outer.nPTWPorts)(outer.dcache.node.edges.out(0), outer.p))
   if (outer.usingPTW) {
     dcachePorts += ptw.io.mem
-    outer.utlbOMSRAMs ++= ptw.omSRAMs
   }
 }
