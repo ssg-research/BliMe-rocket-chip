@@ -11,7 +11,7 @@ import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tilelink._
-import freechips.rocketchip.util.InOrderArbiter
+import freechips.rocketchip.util.{InOrderArbiter, Blinded}
 
 case object BuildRoCC extends Field[Seq[Parameters => LazyRoCC]](Nil)
 
@@ -28,14 +28,14 @@ class RoCCInstruction extends Bundle {
 
 class RoCCCommand(implicit p: Parameters) extends CoreBundle()(p) {
   val inst = new RoCCInstruction
-  val rs1 = Bits(xLen.W)
-  val rs2 = Bits(xLen.W)
+  val rs1 = Blinded(Bits(xLen.W))
+  val rs2 = Blinded(Bits(xLen.W))
   val status = new MStatus
 }
 
 class RoCCResponse(implicit p: Parameters) extends CoreBundle()(p) {
   val rd = Bits(5.W)
-  val data = Bits(xLen.W)
+  val data = Blinded(Bits(xLen.W))
 }
 
 class RoCCCoreIO(implicit p: Parameters) extends CoreBundle()(p) {
@@ -128,7 +128,7 @@ class AccumulatorExampleModuleImp(outer: AccumulatorExample)(implicit p: Paramet
 
   val cmd = Queue(io.cmd)
   val funct = cmd.bits.inst.funct
-  val addr = cmd.bits.rs2(log2Up(outer.n)-1,0)
+  val addr = cmd.bits.rs2.bits(log2Up(outer.n)-1,0)
   val doWrite = funct === 0.U
   val doRead = funct === 1.U
   val doLoad = funct === 2.U
@@ -136,7 +136,7 @@ class AccumulatorExampleModuleImp(outer: AccumulatorExample)(implicit p: Paramet
   val memRespTag = io.mem.resp.bits.tag(log2Up(outer.n)-1,0)
 
   // datapath
-  val addend = cmd.bits.rs1
+  val addend = cmd.bits.rs1.bits
   val accum = regfile(addr)
   val wdata = Mux(doWrite, addend, accum + addend)
 
@@ -207,7 +207,7 @@ class TranslatorExampleModuleImp(outer: TranslatorExample)(implicit p: Parameter
 
   when (io.cmd.fire()) {
     req_rd := io.cmd.bits.inst.rd
-    req_addr := io.cmd.bits.rs1
+    req_addr := io.cmd.bits.rs1.bits
     state := s_ptw_req
   }
 
@@ -290,8 +290,8 @@ class CharacterCountExampleModuleImp(outer: CharacterCountExample)(implicit p: P
   tl_out.d.ready := (state === s_gnt)
 
   when (io.cmd.fire()) {
-    addr := io.cmd.bits.rs1
-    needle := io.cmd.bits.rs2
+    addr := io.cmd.bits.rs1.bits
+    needle := io.cmd.bits.rs2.bits
     resp_rd := io.cmd.bits.inst.rd
     count := 0.U
     finished := false.B
