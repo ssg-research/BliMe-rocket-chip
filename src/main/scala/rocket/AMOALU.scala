@@ -6,6 +6,7 @@ package freechips.rocketchip.rocket
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.config.Parameters
+import freechips.rocketchip.util.BlindedMem
 
 class StoreGen(typ: UInt, addr: UInt, dat: UInt, maxSize: Int) {
   val size = typ(log2Up(log2Up(maxSize)+1)-1,0)
@@ -67,11 +68,12 @@ class AMOALU(operandBits: Int)(implicit p: Parameters) extends Module {
   val add = io.cmd === M_XA_ADD
   val logic_and = io.cmd === M_XA_OR || io.cmd === M_XA_AND
   val logic_xor = io.cmd === M_XA_XOR || io.cmd === M_XA_OR
+  val no_op = !(max || min || add || logic_and || logic_xor)
 
   val adder_out = {
     // partition the carry chain to support sub-xLen addition
     val mask = ~(0.U(operandBits.W) +: widths.init.map(w => !io.mask(w/8-1) << (w-1))).reduce(_|_)
-    (io.lhs & mask) + (io.rhs & mask)
+    (io.lhs.bits & mask) + (io.rhs.bits & mask)
   }
 
   val less = {
@@ -89,19 +91,25 @@ class AMOALU(operandBits: Int)(implicit p: Parameters) extends Module {
       Mux(x(n-1) === y(n-1), isLessUnsigned(x, y, n), Mux(signed, x(n-1), y(n-1)))
     }
 
-    PriorityMux(widths.reverse.map(w => (io.mask(w/8/2), isLess(io.lhs, io.rhs, w))))
+    PriorityMux(widths.reverse.map(w => (io.mask(w/8/2), isLess(io.lhs.bits, io.rhs.bits, w))))
   }
 
-  val minmax = Mux(Mux(less, min, max), io.lhs, io.rhs)
+  val minmax = Mux(Mux(less, min, max), io.lhs.bits, io.rhs.bits)
   val logic =
-    Mux(logic_and, io.lhs & io.rhs, 0.U) |
-    Mux(logic_xor, io.lhs ^ io.rhs, 0.U)
+    Mux(logic_and, io.lhs.bits & io.rhs.bits, 0.U) |
+    Mux(logic_xor, io.lhs.bits ^ io.rhs.bits, 0.U)
   val out =
     Mux(add,                    adder_out,
     Mux(logic_and || logic_xor, logic,
                                 minmax))
 
+  val out_blindmask = Mux(no_op, 
+                          io.rhs.blindmask,
+                          (io.lhs.blindmask & io.mask) | (io.rhs.blindmask & io.mask))
+
   val wmask = FillInterleaved(8, io.mask)
-  io.out := wmask & out | ~wmask & io.lhs
-  io.out_unmasked := out
+  io.out.bits := wmask & out | ~wmask & io.lhs.bits
+  io.out.blindmask := io.mask & out_blindmask | ~io.mask & io.lhs.blindmask
+  io.out_unmasked.bits := out
+  io.out_unmasked.blindmask := out_blindmask
 }
