@@ -57,10 +57,10 @@ class AMOALU(operandBits: Int)(implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val mask = Input(UInt((operandBits / 8).W))
     val cmd = Input(UInt(M_SZ.W))
-    val lhs = Input(UInt(operandBits.W))
-    val rhs = Input(UInt(operandBits.W))
-    val out = Output(UInt(operandBits.W))
-    val out_unmasked = Output(UInt(operandBits.W))
+    val lhs = Input(BlindedMem(UInt(operandBits.W), UInt((operandBits/8).W)))
+    val rhs = Input(BlindedMem(UInt(operandBits.W), UInt((operandBits/8).W)))
+    val out = Output(BlindedMem(UInt(operandBits.W), UInt((operandBits/8).W)))
+    val out_unmasked = Output(BlindedMem(UInt(operandBits.W), UInt((operandBits/8).W)))
   })
 
   val max = io.cmd === M_XA_MAX || io.cmd === M_XA_MAXU
