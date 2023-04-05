@@ -180,7 +180,7 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
 
   val (pte, invalid_paddr) = {
     val tmp = new PTE().fromBits(mem_resp_data.bits)
-    when (mem_resp_data.blindmask.orR) { // if blinded, replace with blank PTE
+    when (mem_resp_data.clTags(0) =/= 0.U) { // if blinded, replace with blank PTE
       tmp.ppn := 0.U
       tmp.reserved_for_software := 0.U
       tmp.d := false.B

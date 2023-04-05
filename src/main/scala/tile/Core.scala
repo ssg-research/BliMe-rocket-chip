@@ -9,6 +9,8 @@ import freechips.rocketchip.rocket._
 import freechips.rocketchip.util._
 
 case object XLen extends Field[Int]
+case object ClTagOffBits extends Field[Int]
+case object ClTagGranule extends Field[Int]
 case object MaxHartIdBits extends Field[Int]
 
 // These parameters can be varied per-core

@@ -16,6 +16,8 @@ class BaseSubsystemConfig extends Config ((site, here, up) => {
   // Tile parameters
   case PgLevels => if (site(XLen) == 64) 3 /* Sv39 */ else 2 /* Sv32 */
   case XLen => 64 // Applies to all cores
+  // case ClTagOffBits => 3
+  // case ClTagGranule => 8 // must be 2^ClTagOffBits
   case MaxHartIdBits => log2Up(site(TilesLocated(InSubsystem)).map(_.tileParams.hartId).max+1)
   // Interconnect parameters
   case SystemBusKey => SystemBusParams(

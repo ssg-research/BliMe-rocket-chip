@@ -85,6 +85,8 @@ trait HasL1HellaCacheParameters extends HasL1CacheParameters with HasCoreParamet
   def maxUncachedInFlight = cacheParams.nMMIOs
   def dataScratchpadSize = cacheParams.dataScratchpadBytes
 
+  def tagsPerWord = math.max(coreDataBits / 8 / BlindedMem.CL_TAG_GRANULE_SZ, 1)
+
   require(rowBits >= coreDataBits, s"rowBits($rowBits) < coreDataBits($coreDataBits)")
   if (!usingDataScratchpad)
     require(rowBits == cacheDataBits, s"rowBits($rowBits) != cacheDataBits($cacheDataBits)")
@@ -112,7 +114,7 @@ trait HasCoreMemOp extends HasL1HellaCacheParameters {
 }
 
 trait HasCoreData extends HasCoreParameters {
-  val data = BlindedMem(Bits(width = coreDataBits), Bits(width = coreDataBytes))
+  val data = BlindedMem(Bits(width = coreDataBits), 1)
   val mask = UInt(width = coreDataBytes)
 }
 
@@ -129,9 +131,9 @@ class HellaCacheResp(implicit p: Parameters) extends CoreBundle()(p)
     with HasCoreData {
   val replay = Bool()
   val has_data = Bool()
-  val data_word_bypass = BlindedMem(Bits(width = coreDataBits), Bits(width = coreDataBytes))
-  val data_raw = BlindedMem(Bits(width = coreDataBits), Bits(width = coreDataBytes))
-  val store_data = BlindedMem(Bits(width = coreDataBits), Bits(width = coreDataBytes))
+  val data_word_bypass = BlindedMem(Bits(width = coreDataBits), 1)
+  val data_raw = BlindedMem(Bits(width = coreDataBits), 1)
+  val store_data = BlindedMem(Bits(width = coreDataBits), 1)
 }
 
 class AlignmentExceptions extends Bundle {

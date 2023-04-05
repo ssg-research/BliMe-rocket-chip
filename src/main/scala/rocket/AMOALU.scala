@@ -57,10 +57,11 @@ class AMOALU(operandBits: Int)(implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val mask = Input(UInt((operandBits / 8).W))
     val cmd = Input(UInt(M_SZ.W))
-    val lhs = Input(BlindedMem(UInt(operandBits.W), UInt((operandBits/8).W)))
-    val rhs = Input(BlindedMem(UInt(operandBits.W), UInt((operandBits/8).W)))
-    val out = Output(BlindedMem(UInt(operandBits.W), UInt((operandBits/8).W)))
-    val out_unmasked = Output(BlindedMem(UInt(operandBits.W), UInt((operandBits/8).W)))
+    val lhs = Input(BlindedMem(UInt(operandBits.W), 1))
+    val rhs = Input(BlindedMem(UInt(operandBits.W), 1))
+    val out = Output(BlindedMem(UInt(operandBits.W), 1))
+    val out_unmasked = Output(BlindedMem(UInt(operandBits.W), 1))
+    val blinded_xcpt = Output(Bool())
   })
 
   val max = io.cmd === M_XA_MAX || io.cmd === M_XA_MAXU
@@ -69,6 +70,18 @@ class AMOALU(operandBits: Int)(implicit p: Parameters) extends Module {
   val logic_and = io.cmd === M_XA_OR || io.cmd === M_XA_AND
   val logic_xor = io.cmd === M_XA_XOR || io.cmd === M_XA_OR
   val no_op = !(max || min || add || logic_and || logic_xor)
+
+  val blinded_xcpt = Wire(Bool())
+  io.blinded_xcpt := blinded_xcpt
+
+  blinded_xcpt := false.B
+  when (!no_op && 
+        io.lhs.clTags(0) =/= 0.U && 
+        io.rhs.clTags(0) =/= 0.U && 
+        io.lhs.clTags(0) =/= io.rhs.clTags(0)) {
+    blinded_xcpt := true.B
+    printf("[amoalu] Blinded exception set to true\n")
+  }
 
   val adder_out = {
     // partition the carry chain to support sub-xLen addition
@@ -104,12 +117,21 @@ class AMOALU(operandBits: Int)(implicit p: Parameters) extends Module {
                                 minmax))
 
   val out_blindmask = Mux(no_op, 
-                          io.rhs.blindmask,
-                          (io.lhs.blindmask & io.mask) | (io.rhs.blindmask & io.mask))
+                          io.rhs.clTags(0),
+                          io.lhs.clTags(0) | io.rhs.clTags(0)) // an exception is raised if not no_op and clTags are different; see blinded_xcpt
 
   val wmask = FillInterleaved(8, io.mask)
-  io.out.bits := wmask & out | ~wmask & io.lhs.bits
-  io.out.blindmask := io.mask & out_blindmask | ~io.mask & io.lhs.blindmask
-  io.out_unmasked.bits := out
-  io.out_unmasked.blindmask := out_blindmask
+  when (blinded_xcpt) {
+    printf("[amoalu] Blinded exception set to true.\n")
+    printf("[amoalu] lhs.clTag = %x, rhx.clTag = %x \n", io.lhs.clTags(0), io.rhs.clTags(0))
+    io.out.bits := 0.U
+    io.out.clTags(0) := 0.U
+    io.out_unmasked.bits := 0.U
+    io.out_unmasked.clTags(0) := 0.U
+  } .otherwise {
+    io.out.bits := wmask & out | ~wmask & io.lhs.bits
+    io.out.clTags(0) := io.mask & out_blindmask | ~io.mask & io.lhs.clTags(0)
+    io.out_unmasked.bits := out
+    io.out_unmasked.clTags(0) := out_blindmask
+  }
 }

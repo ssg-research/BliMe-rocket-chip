@@ -23,7 +23,7 @@ class L1DataReadReq(implicit p: Parameters) extends L1HellaCacheBundle()(p) {
 
 class L1DataWriteReq(implicit p: Parameters) extends L1DataReadReq()(p) {
   val wmask  = Bits(width = rowWords)
-  val data   = BlindedMem(Bits(width = encRowBits), Bits(width = (coreDataBytes*rowWords)))
+  val data   = BlindedMem(Bits(width = encRowBits), rowWords)
   val blindedOnly = Bool()
 }
 
@@ -78,7 +78,7 @@ class IOMSHR(id: Int)(implicit edge: TLEdgeOut, p: Parameters) extends L1HellaCa
   val a_source = UInt(id)
   val a_address = req.addr
   val a_size = req.size
-  val a_data = Fill(beatWords, Cat(req.data.blindmask, req.data.bits))
+  val a_data = Fill(beatWords, Cat(req.data.clTags(0), req.data.bits))
 
   val get     = edge.Get(a_source, a_address, a_size)._2
   val put     = edge.Put(a_source, a_address, a_size, a_data)._2
@@ -445,7 +445,7 @@ class WritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1HellaCach
     val req = Decoupled(new WritebackReq(edge.bundle)).flip
     val meta_read = Decoupled(new L1MetaReadReq)
     val data_req = Decoupled(new L1DataReadReq)
-    val data_resp = BlindedMem(Bits(INPUT, encRowBits), Bits(INPUT, (coreDataBytes*rowWords)))
+    val data_resp = BlindedMem(Bits(INPUT, encRowBits), rowWords)
     val release = Decoupled(new TLBundleC(edge.bundle))
   }
 
@@ -619,7 +619,7 @@ class DataArray(implicit p: Parameters) extends L1HellaCacheModule()(p) {
   val io = new Bundle {
     val read = Decoupled(new L1DataReadReq).flip
     val write = Decoupled(new L1DataWriteReq).flip
-    val resp = Vec(nWays, BlindedMem(Bits(OUTPUT, encRowBits), Bits(OUTPUT, (coreDataBytes*rowWords))))
+    val resp = Vec(nWays, BlindedMem(Bits(OUTPUT, encRowBits), rowWords))
   }
 
   val waddr = io.write.bits.addr >> rowOffBits
@@ -629,7 +629,7 @@ class DataArray(implicit p: Parameters) extends L1HellaCacheModule()(p) {
     for (w <- 0 until nWays by rowWords) {
       val wway_en = io.write.bits.way_en(w+rowWords-1,w)
       val rway_en = io.read.bits.way_en(w+rowWords-1,w)
-      val resp = Wire(Vec(rowWords, BlindedMem(Bits(width = encRowBits), Bits(width = (coreDataBytes*rowWords)))))
+      val resp = Wire(Vec(rowWords, BlindedMem(Bits(width = encRowBits), rowWords)))
       val r_raddr = RegEnable(io.read.bits.addr, io.read.valid)
       for (i <- 0 until resp.size) {
         val array  = DescribedSRAM(
@@ -835,7 +835,7 @@ class NonBlockingDCacheModule(outer: NonBlockingDCache) extends HellaCacheModule
     lrsc_count := 0
   }
 
-  val s2_data = Wire(Vec(nWays, BlindedMem(Bits(width=encRowBits), Bits(width = (coreDataBytes*rowWords)))))
+  val s2_data = Wire(Vec(nWays, BlindedMem(Bits(width=encRowBits), rowWords)))
   for (w <- 0 until nWays) {
     val regs = Reg(Vec(rowWords, Bits(width = encDataBits)))
     val en1 = s1_clk_en && s1_tag_eq_way(w)
@@ -864,7 +864,8 @@ class NonBlockingDCacheModule(outer: NonBlockingDCache) extends HellaCacheModule
   writeArb.io.in(0).bits.addr := s3_req.addr
   writeArb.io.in(0).bits.wmask := UIntToOH(s3_req.addr.extract(rowOffBits-1,offsetlsb))
   writeArb.io.in(0).bits.data.bits := Fill(rowWords, s3_req.data.bits)
-  writeArb.io.in(0).bits.data.blindmask := Fill(rowWords, s3_req.data.blindmask)
+  // writeArb.io.in(0).bits.data.blindmask := Fill(rowWords, s3_req.data.blindmask)
+  writeArb.io.in(0).bits.data.clTags.map{t => t := s3_req.data.clTags(0)}
   writeArb.io.in(0).valid := s3_valid
   writeArb.io.in(0).bits.way_en :=  s3_way
 
